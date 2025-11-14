@@ -154,6 +154,76 @@ def linear(matIn: FileName, matWeights: FileName, matBias: FileName, matOut: Fil
   printMatrix(bias, matBias)
   printMatrix(output, matOut)
 
+def bitlinear_forward_cppstyle(
+    x: torch.Tensor,           # [ROWS, HIDDEN]
+    w_cpp: torch.Tensor,       # [HIDDEN, COLS] (this matches what you write to file)
+    b: torch.Tensor            # [COLS]
+) -> torch.Tensor:
+  """
+  Python reference for bitlinear158b_forward to match the C++ implementation.
+  x:      [rows, hidden]
+  w_cpp:  [hidden, cols]   (NOTE: already transposed for C++)
+  b:      [cols]
+  """
+  rows, hidden = x.shape
+  hidden2, cols = w_cpp.shape
+  assert hidden2 == hidden
+
+  # 1) beta = mean(|w|)
+  beta = w_cpp.abs().mean()
+  if beta < 1e-8:
+    beta = torch.tensor(1e-8, dtype=w_cpp.dtype)
+
+  # 2) ternarize weights: -1, 0, +1 (signs only; scaling via beta later)
+  r = w_cpp / beta
+  ternary_sign = torch.where(
+      r > 0.5,
+      torch.ones_like(r),
+      torch.where(r < -0.5, -torch.ones_like(r), torch.zeros_like(r))
+  )
+
+  # 3) quantize activations per row to int8
+  x_int8 = torch.zeros_like(x, dtype=torch.int8)
+  scale_row = torch.zeros(rows, dtype=x.dtype)
+
+  for i in range(rows):
+    max_val = x[i].abs().max()
+    if max_val < 1e-8:
+      max_val = torch.tensor(1e-8, dtype=x.dtype)
+
+    gamma = 127.0 / max_val
+    scale_row[i] = 1.0 / gamma   # matches C++: scale_row[r] = 1/gamma
+
+    v = x[i] * gamma
+    v = torch.round(torch.clamp(v, -128.0, 127.0))
+    x_int8[i] = v.to(torch.int8)
+
+  # 4) integer-like MAC then scaling
+  # acc = x_int8 @ ternary_sign  (done in int, then scaled)
+  acc = torch.matmul(x_int8.to(torch.int32), ternary_sign.to(torch.int32))  # [rows, cols]
+
+  # per-row scale: (scale_row[r] * beta)
+  scale = (scale_row * beta).view(rows, 1)     # [rows, 1]
+  out = acc.to(x.dtype) * scale + b           # broadcast bias over rows
+
+  return out
+
+def bitlinear(matIn: FileName, matWeights: FileName, matBias: FileName, matOut: FileName) -> None:
+  # Same shapes as linear()
+  input1 = create_tensor(INT_LOW, INT_HIGH, (ROWS, HIDDEN)).to(torch.float32)
+  weight = create_tensor(INT_LOW, INT_HIGH, (COLS, HIDDEN)).to(torch.float32)
+  bias = create_tensor(INT_LOW, INT_HIGH, (COLS,)).to(torch.float32)
+
+  # C++ sees weights as [HIDDEN][COLS], which is weight.T
+  w_cpp = torch.transpose(weight, 0, 1)   # [HIDDEN, COLS]
+
+  output = bitlinear_forward_cppstyle(input1, w_cpp, bias)
+
+  printMatrix(input1, matIn)
+  printMatrix(w_cpp, matWeights)  # this matches what C++ expects
+  printMatrix(bias, matBias)
+  printMatrix(output, matOut)
+
 def mask(matIn: FileName, matMask: FileName, matOut: FileName) -> None:
   input1 = create_tensor(INT_LOW, INT_HIGH, (ROWS, COLS))
   random_tensor = torch.randint(0, 2, size=(ROWS, COLS))
@@ -298,6 +368,8 @@ match test:
               input_filename[2], result_filename)
   case "Test_Linear":
     linear(input_filename[0], input_filename[1], input_filename[2], result_filename)
+  case "Test_BitLinear":
+    bitlinear(input_filename[0], input_filename[1], input_filename[2], result_filename)	  
   case "Test_Mask":
     mask(input_filename[0], input_filename[1], result_filename)
   case "Test_MatAdd":
