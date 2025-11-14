@@ -147,6 +147,22 @@ void accel(
 }
 #endif
 
+#ifdef BITLINEAR
+void accel(
+    idata_t weights[HIDDEN][TOKEN_LEN],
+    idata_t biases[TOKEN_LEN],
+    idata_t input[SEQ_LEN][HIDDEN],
+    odata_t result[SEQ_LEN][TOKEN_LEN]
+) {
+    bitlinear158b_forward<idata_t, SEQ_LEN, HIDDEN, TOKEN_LEN>(
+        input,
+        weights,
+        biases,
+        result
+    );
+}
+#endif
+
 #ifdef MATMUL
 void accel(
 	idata_t matA[SEQ_LEN][HIDDEN],
