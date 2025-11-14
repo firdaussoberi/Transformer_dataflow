@@ -131,21 +131,22 @@ void accel(
 }
 #endif
 
-#ifdef LINEAR
+#if defined(LINEAR) && !defined(BITLINEAR)
 void accel(
-	idata_t weights[HIDDEN][TOKEN_LEN],
-	idata_t biases[TOKEN_LEN],
-	idata_t input[SEQ_LEN][HIDDEN],
-	odata_t result[SEQ_LEN][TOKEN_LEN]
+    idata_t weights[HIDDEN][TOKEN_LEN],
+    idata_t biases[TOKEN_LEN],
+    idata_t input[SEQ_LEN][HIDDEN],
+    odata_t result[SEQ_LEN][TOKEN_LEN]
 ) {
-	linear<idata_t, SEQ_LEN, HIDDEN, TOKEN_LEN> (
-		input,
-		weights,
-		biases,
-		result
-	);
+    linear<idata_t, SEQ_LEN, HIDDEN, TOKEN_LEN>(
+        input,
+        weights,
+        biases,
+        result
+    );
 }
 #endif
+
 
 #ifdef BITLINEAR
 void accel(
